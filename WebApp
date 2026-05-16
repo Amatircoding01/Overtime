@@ -1,0 +1,11 @@
+function doGet(e) {
+  return HtmlService.createHtmlOutputFromFile('Login')
+    .setTitle('HRIS KOBE')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1'); 
+}
+
+// Fungsi ini yang bertugas memanggil Dashboard tanpa merusak halaman
+function getHtmlPage(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
