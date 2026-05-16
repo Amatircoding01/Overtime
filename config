@@ -1,0 +1,146 @@
+// ==========================================
+// FILE: Config.gs
+// TUJUAN: Menyimpan Pengaturan Terpusat Aplikasi (ID, Jam Kerja, dan GPS Dinamis)
+// ==========================================
+
+const CONFIG = {
+  // 1. ID Spreadsheet Database Utama & Overtime (Menggunakan file yang sama)
+  DB_UTAMA: '1c3wBMQe6D1utNrUEaFIQwFIo8d_MUj8YNqTX4cIw9eE',
+  ID_OVERTIME: '1c3wBMQe6D1utNrUEaFIQwFIo8d_MUj8YNqTX4cIw9eE',
+  
+  // ID Spreadsheet Master Karyawan (File terpisah)
+  ID_MASTER_KARYAWAN: '1q6HP-HEjUmw4TLjhFGgY899gftgiPJcvU8Li_9Q37FA',
+  
+  // 2. Nama-nama Sheet di dalam Spreadsheet
+  SHEET_INDUK: 'Data_induk',
+  SHEET_ABSENSI: 'Absensi',
+  SHEET_CALCULATION: 'Calculation',
+  SHEET_Master_UMUT: 'Master_UMUT',
+  SHEET_LATLONG: 'Master_Latlong', // Menambahkan nama sheet baru untuk GPS
+
+  // 3. Pengaturan Periode & Jam Kerja (Shift)
+  RAMADAN_PERIOD: { 
+    START: "2026-02-22", 
+    END: "2026-03-22" 
+  },
+  NORMAL_SHIFT: {
+    MON_THU: { START: "07:30:00", END: "16:30:00", REST: "12:00-13:00" },
+    FRI:     { START: "07:30:00", END: "17:00:00", REST: "11:30-12:30" }
+  },
+  RAMADAN_SHIFT: {
+    MON_THU: { START: "07:30:00", END: "16:00:00", REST: "12:00-12:30" },
+    FRI:     { START: "07:30:00", END: "16:30:00", REST: "12:00-13:00" }
+  }
+};
+
+// ==========================================
+// FUNGSI PEMBANTU: MEMBACA JADWAL SHIFT
+// ==========================================
+function dapatkanJadwalShift(tanggalInput) {
+  const tgl = new Date(tanggalInput);
+  tgl.setHours(0, 0, 0, 0); 
+  const tglMulaiRamadan = new Date(CONFIG.RAMADAN_PERIOD.START);
+  const tglSelesaiRamadan = new Date(CONFIG.RAMADAN_PERIOD.END);
+  const isRamadan = (tgl >= tglMulaiRamadan && tgl <= tglSelesaiRamadan);
+  const hari = tgl.getDay();
+  const blokShift = isRamadan ? CONFIG.RAMADAN_SHIFT : CONFIG.NORMAL_SHIFT;
+
+  if (hari === 5) return blokShift.FRI; 
+  else if (hari >= 1 && hari <= 4) return blokShift.MON_THU; 
+  else return null; 
+}
+
+// ==========================================
+// FUNGSI PEMBANTU: MEMBACA GPS DARI SPREADSHEET
+// ==========================================
+/**
+ * Fungsi ini membaca sheet Master_Latlong dan mencari lokasi yang berstatus "aktif".
+ * Urutan Kolom di Spreadsheet: A=Lokasi(0), B=LAT(1), C=LONG(2), D=RADIUS(3), E=STATUS(4)
+ */
+function dapatkanLokasiGPS() {
+  try {
+    const ssMaster = SpreadsheetApp.openById(CONFIG.ID_MASTER_KARYAWAN);
+    const sheetLatlong = ssMaster.getSheetByName(CONFIG.SHEET_LATLONG);
+    
+    // Jika sheet tidak ditemukan, hentikan proses
+    if (!sheetLatlong) return null; 
+    
+    // Ambil semua data di dalam sheet tersebut
+    const data = sheetLatlong.getDataRange().getValues();
+    
+    // Kita mulai looping dari angka 1 (baris kedua) karena baris pertama (angka 0) adalah judul kolom
+    for (let i = 1; i < data.length; i++) {
+      let status = String(data[i][4]).trim().toLowerCase(); // Membaca kolom E (STATUS_LATLONG)
+      
+      // Jika statusnya aktif, ambil data koordinatnya
+      if (status === "aktif") {
+        return {
+          namaLokasi: data[i][0],              // Kolom A
+          latitude: parseFloat(data[i][1]),    // Kolom B
+          longitude: parseFloat(data[i][2]),   // Kolom C
+          radiusMax: parseInt(data[i][3])      // Kolom D
+        };
+      }
+    }
+    
+    // Jika tidak ada satupun yang statusnya "aktif", kembalikan null
+    return null; 
+  } catch (e) {
+    return null;
+  }
+}
+// ==========================================
+// FUNGSI BARU: Menentukan Jam Mulai Lembur Baku
+// ==========================================
+/**
+ * Fungsi ini mengambil jam pulang (END) dari jadwal reguler 
+ * untuk dijadikan jam mulai (START) lembur.
+ * 
+ * @param {Date|String} tanggalInput - Tanggal lembur karyawan (contoh: "2026-04-16")
+ * @return {String} - Mengembalikan string jam (contoh: "16:30:00")
+ */
+function dapatkanJamMulaiLembur(tanggalInput) {
+  // 1. Ambil jadwal shift berdasarkan tanggal menggunakan fungsi di Config.gs
+  const jadwal = dapatkanJadwalShift(tanggalInput);
+
+  // 2. Jika hari kerja (Senin - Jumat), kembalikan jam pulang (END)
+  if (jadwal !== null) {
+    return jadwal.END; 
+  } 
+  // 3. Jika hari libur (Sabtu/Minggu), tidak ada jam pulang baku.
+  // Set baku menjadi jam pagi, karena biasanya lembur hari libur dihitung dari kedatangan.
+  else {
+    return "07:30:00"; // Silakan ganti jika aturan hari libur berbeda
+  }
+}
+function ambilDataLibur() {
+  const ss = SpreadsheetApp.openById("1q6HP-HEjUmw4TLjhFGgY899gftgiPJcvU8Li_9Q37FA");
+  const sheet = ss.getSheetByName("Setting_Libur") || ss.insertSheet("Setting_Libur");
+  const data = sheet.getDataRange().getValues();
+  let hasil = [];
+  for (let i = 1; i < data.length; i++) {
+    if(!data[i][0]) continue;
+    hasil.push({
+      rowId: i + 1,
+      tglStr: Utilities.formatDate(new Date(data[i][0]), "GMT+7", "dd/MM/yyyy"),
+      status: data[i][1],
+      ket: data[i][2]
+    });
+  }
+  // Sort berdasarkan tanggal terbaru
+  return { status: "SUCCESS", data: hasil };
+}
+
+function simpanLiburServer(d) {
+  const ss = SpreadsheetApp.openById("1q6HP-HEjUmw4TLjhFGgY899gftgiPJcvU8Li_9Q37FA");
+  const sheet = ss.getSheetByName("Setting_Libur");
+  sheet.appendRow([new Date(d.tgl), d.status, d.ket]);
+  return { status: "SUCCESS", message: "Hari libur berhasil disimpan!" };
+}
+
+function hapusLiburServer(rowId) {
+  const ss = SpreadsheetApp.openById("1q6HP-HEjUmw4TLjhFGgY899gftgiPJcvU8Li_9Q37FA");
+  const sheet = ss.getSheetByName("Setting_Libur");
+  sheet.deleteRow(parseInt(rowId));
+  return { status: "SUCCESS", message: "Hari libur berhasil dihapus!" };
+}
